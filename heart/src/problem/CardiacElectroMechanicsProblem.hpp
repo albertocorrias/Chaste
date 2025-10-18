@@ -54,6 +54,81 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "CardiacElectroMechanicsVtkHandler.hpp"
 #include "VoltageInterpolaterOntoMechanicsMesh.hpp"
 
+
+/**
+ * A small class to handle the modification of conductivities in
+ * a cardiac elecctromechanics problem.
+ * Using a MeshPair object it implements the pure method
+ * rCalculateModifiedConductivityTensor to return the modified conductivity
+ * tensor.
+ */
+template<unsigned ELEMENT_DIM, unsigned SPACE_DIM>
+class CardiacConductivityModifier
+    : public AbstractConductivityModifier<ELEMENT_DIM, SPACE_DIM>
+{
+
+  private:
+        /** Somewhere to store the modified conductivity tensor */
+        c_matrix<double,ELEMENT_DIM,SPACE_DIM> mModifiedConductivityTensor;
+
+        /**The mesh pair object used for the calculations of of the modifed tensor */
+        FineCoarseMeshPair<SPACE_DIM>* mpMeshPair;
+
+        /** The deformation gradients for each element */
+        std::vector<c_matrix<double,ELEMENT_DIM,SPACE_DIM> >& mrDeformationGradientsForEachMechanicsElement;
+  public:
+
+  /**
+   * Constructor. It only initializes the reference to the vector of deformation gradients
+   * 
+   * @param rdeformationGradients a Reference to the deformation gradients
+   */
+    CardiacConductivityModifier(std::vector<c_matrix<double,ELEMENT_DIM,SPACE_DIM> >& rdeformationGradients)
+        : mpMeshPair(NULL),
+          mrDeformationGradientsForEachMechanicsElement(rdeformationGradients)
+    {
+
+    }
+
+    /**
+     * Sets the emsh pair to be used in the calculations of 
+     * the modfied conductivity tensor. Must be called before rCalculateModifiedConductivityTensor
+     * 
+     * @param pMeshPair a pointer to the mesh pair object
+     * 
+     */
+    void SetMeshPair(FineCoarseMeshPair<SPACE_DIM>* pMeshPair)
+    {
+        mpMeshPair = pMeshPair;
+    }
+
+    /**
+     *  The implementation of the pure method defined in the base class AbstractConductivityModifier. The tissue class will
+     *  call this method.
+     *  @param elementIndex Index of current element
+     *  @param rOriginalConductivity Reference to the original (for example, undeformed) conductivity tensor
+     *  @param domainIndex Used to tailor modification to the domain. 0 = intracellular, 1 = extracellular, 2 = second intracellular (tridomain)
+     *  @return Reference to a modified conductivity tensor.
+     */
+    c_matrix<double,ELEMENT_DIM,SPACE_DIM>& rCalculateModifiedConductivityTensor(unsigned elementIndex, const c_matrix<double,ELEMENT_DIM,SPACE_DIM>& rOriginalConductivity, unsigned domainIndex)
+    {
+        assert(mpMeshPair);
+        
+        // first get the deformation gradient for this electrics element
+        unsigned containing_mechanics_elem = mpMeshPair->rGetCoarseElementsForFineElementCentroids()[elementIndex];
+        c_matrix<double,ELEMENT_DIM,SPACE_DIM>& r_deformation_gradient = mrDeformationGradientsForEachMechanicsElement[containing_mechanics_elem];
+
+        // compute sigma_def = F^{-1} sigma_undef F^{-T}
+        c_matrix<double,ELEMENT_DIM,SPACE_DIM> inv_F = Inverse(r_deformation_gradient);
+        mModifiedConductivityTensor = prod(inv_F, rOriginalConductivity);
+        mModifiedConductivityTensor = prod(mModifiedConductivityTensor, trans(inv_F));
+
+        return mModifiedConductivityTensor;
+    }
+};
+
+
+
 /**
  * Enumeration of the possible electrics problem types
  * to be used in an EM problem.
@@ -94,7 +169,7 @@ typedef enum ElectricsProblemType_
 
 template<unsigned DIM, unsigned ELEC_PROB_DIM=1>
 class CardiacElectroMechanicsProblem
-    : public AbstractConductivityModifier<DIM,DIM> // this only inherits from this class so it can be passed to the tissue to
+    //: public AbstractConductivityModifier<DIM,DIM> // this only inherits from this class so it can be passed to the tissue to
                                                    // allow deformation-based altering of the conductivity
 {
 friend class TestAbstractContractionCellFactory;
@@ -177,8 +252,9 @@ protected :
     /** A vector of deformation gradients (each entry a matrix), one for each element in the mechanics mesh */
     std::vector<c_matrix<double,DIM,DIM> > mDeformationGradientsForEachMechanicsElement;
 
-    /** Somewhere to store the modified conductivity tensor */
-    c_matrix<double,DIM,DIM> mModifiedConductivityTensor;
+    CardiacConductivityModifier<DIM,DIM>* mpConductivityModifier;
+
+
 
 #ifdef CHASTE_VTK
     /** Pointer to the VTK writer class. Initialized within Initialise() method*/
@@ -276,15 +352,7 @@ public :
     std::vector<c_vector<double,DIM> >& rGetDeformedPosition();
 
 
-    /**
-     *  The implementation of the pure method defined in the base class AbstractConductivityModifier. The tissue class will
-     *  call this method.
-     *  @param elementIndex Index of current element
-     *  @param rOriginalConductivity Reference to the original (for example, undeformed) conductivity tensor
-     *  @param domainIndex Used to tailor modification to the domain. 0 = intracellular, 1 = extracellular, 2 = second intracellular (tridomain)
-     *  @return Reference to a modified conductivity tensor.
-     */
-    c_matrix<double,DIM,DIM>& rCalculateModifiedConductivityTensor(unsigned elementIndex, const c_matrix<double,DIM,DIM>& rOriginalConductivity, unsigned domainIndex);
+
 
 
     /**

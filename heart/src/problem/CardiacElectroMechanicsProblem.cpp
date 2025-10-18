@@ -165,22 +165,6 @@ void CardiacElectroMechanicsProblem<DIM,ELEC_PROB_DIM>::WriteWatchedLocationData
     mpWatchedLocationFile->flush();
 }
 
-template<unsigned DIM, unsigned ELEC_PROB_DIM>
-c_matrix<double,DIM,DIM>& CardiacElectroMechanicsProblem<DIM,ELEC_PROB_DIM>::rCalculateModifiedConductivityTensor(unsigned elementIndex, const c_matrix<double,DIM,DIM>& rOriginalConductivity, unsigned domainIndex)
-{
-
-    // first get the deformation gradient for this electrics element
-    unsigned containing_mechanics_elem = mpMeshPair->rGetCoarseElementsForFineElementCentroids()[elementIndex];
-    c_matrix<double,DIM,DIM>& r_deformation_gradient = mDeformationGradientsForEachMechanicsElement[containing_mechanics_elem];
-
-    // compute sigma_def = F^{-1} sigma_undef F^{-T}
-    c_matrix<double,DIM,DIM> inv_F = Inverse(r_deformation_gradient);
-    mModifiedConductivityTensor = prod(inv_F, rOriginalConductivity);
-    mModifiedConductivityTensor = prod(mModifiedConductivityTensor, trans(inv_F));
-
-    return mModifiedConductivityTensor;
-}
-
 
 /**
  * Helper "function" for the constructor, to create the electrics sub-problem without dynamic_cast.
@@ -319,7 +303,8 @@ CardiacElectroMechanicsProblem<DIM,ELEC_PROB_DIM>::CardiacElectroMechanicsProble
     {
         mDeformationOutputDirectory = "";
     }
-
+    
+    mpConductivityModifier = new CardiacConductivityModifier<DIM,DIM>(mDeformationGradientsForEachMechanicsElement);
 //    mpImpactRegion=NULL;
 }
 
@@ -337,7 +322,8 @@ CardiacElectroMechanicsProblem<DIM,ELEC_PROB_DIM>::~CardiacElectroMechanicsProbl
     delete mpElectricsProblem;
     delete mpCardiacMechSolver;
     delete mpMeshPair;
-    
+    delete mpConductivityModifier;
+
 #ifdef CHASTE_VTK
     if (mWriteOutput && HeartConfig::Instance()->GetVisualizeWithVtk())
     {
@@ -437,6 +423,9 @@ void CardiacElectroMechanicsProblem<DIM,ELEC_PROB_DIM>::Initialise()
     mpCardiacMechSolver->SetFineCoarseMeshPair(mpMeshPair);
     mpCardiacMechSolver->Initialise();
 
+    //Pass the (pointer to) the mesh pair object to the conductivity modifier
+    mpConductivityModifier->SetMeshPair(mpMeshPair);
+    
     unsigned num_quad_points = mpCardiacMechSolver->GetTotalNumQuadPoints();
     mInterpolatedCalciumConcs.assign(num_quad_points, 0.0);
     mInterpolatedVoltages.assign(num_quad_points, 0.0);
@@ -461,8 +450,8 @@ void CardiacElectroMechanicsProblem<DIM,ELEC_PROB_DIM>::Initialise()
 
         // initialise the store of the F in each mechanics element (one constant value of F) in each
         mDeformationGradientsForEachMechanicsElement.resize(mpMechanicsMesh->GetNumElements(),identity_matrix<double>(DIM));
-    }
 
+    }
 
     if (mpProblemDefinition->GetDeformationAffectsCellModels())
     {
@@ -478,9 +467,8 @@ void CardiacElectroMechanicsProblem<DIM,ELEC_PROB_DIM>::Initialise()
         // mechanics solve to electrics mesh elements
         mpMeshPair->ComputeCoarseElementsForFineElementCentroids(false);
 
-        // tell the abstract tissue class that the conductivities need to be modified, passing in this class
-        // (which is of type AbstractConductivityModifier)
-        mpElectricsProblem->GetTissue()->SetConductivityModifier(this);
+        // tell the abstract tissue class that the conductivities need to be modified, passing in the cardiac conductivity modifier
+        mpElectricsProblem->GetTissue()->SetConductivityModifier(mpConductivityModifier);
     }
 
     if (mWriteOutput)
@@ -609,7 +597,8 @@ void CardiacElectroMechanicsProblem<DIM,ELEC_PROB_DIM>::Solve()
     }
 
     mpMechanicsSolver->SetIncludeActiveTension(true);
-    MechanicsEventHandler::EndEvent(MechanicsEventHandler::ALL_MECH);
+
+    MechanicsEventHandler::EndEvent(MechanicsEventHandler::ALL_MECH); 
     LOG(2, "    Number of newton iterations = " << total_newton_iters);
 
 
