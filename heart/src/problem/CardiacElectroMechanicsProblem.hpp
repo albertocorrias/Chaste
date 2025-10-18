@@ -252,9 +252,8 @@ protected :
     /** A vector of deformation gradients (each entry a matrix), one for each element in the mechanics mesh */
     std::vector<c_matrix<double,DIM,DIM> > mDeformationGradientsForEachMechanicsElement;
 
+    /**Pointer to the conductivity modifier object. Initialized during construction */
     CardiacConductivityModifier<DIM,DIM>* mpConductivityModifier;
-
-
 
 #ifdef CHASTE_VTK
     /** Pointer to the VTK writer class. Initialized within Initialise() method*/
